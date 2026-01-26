@@ -23,13 +23,9 @@ env:
   PROJECT_PATH: /home/sdyn/sdyn-platform
 
 jobs:
-  # Deploy to production
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://e-sdy.mn
 
     steps:
       - name: Checkout code
@@ -45,79 +41,26 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H ${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy all services
-        if: github.event.inputs.service == 'all' || github.event.inputs.service == ''
+      - name: Deploy
         run: |
           ssh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'ENDSSH'
-            cd ${{ env.PROJECT_PATH }}
-
+            cd /home/sdyn/sdyn-platform
             echo ">>> Pulling latest code..."
             git pull origin main
-
             echo ">>> Building images..."
             docker compose build --parallel
-
             echo ">>> Deploying services..."
             docker compose up -d
-
-            echo ">>> Cleaning up old images..."
+            echo ">>> Cleaning up..."
             docker image prune -f
-
-            echo ">>> Checking service health..."
-            sleep 10
+            echo ">>> Status:"
             docker compose ps
-
-            echo ">>> Deployment completed!"
-          ENDSSH
-
-      - name: Deploy backend only
-        if: github.event.inputs.service == 'backend'
-        run: |
-          ssh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'ENDSSH'
-            cd ${{ env.PROJECT_PATH }}
-            git pull origin main
-            docker compose build backend
-            docker compose up -d backend
-            docker compose ps backend
-          ENDSSH
-
-      - name: Deploy frontend only
-        if: github.event.inputs.service == 'frontend'
-        run: |
-          ssh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'ENDSSH'
-            cd ${{ env.PROJECT_PATH }}
-            git pull origin main
-            docker compose build frontend
-            docker compose up -d frontend
-            docker compose ps frontend
-          ENDSSH
-
-      - name: Deploy admin only
-        if: github.event.inputs.service == 'admin'
-        run: |
-          ssh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'ENDSSH'
-            cd ${{ env.PROJECT_PATH }}
-            git pull origin main
-            docker compose build admin
-            docker compose up -d admin
-            docker compose ps admin
+            echo ">>> Done!"
           ENDSSH
 
       - name: Health check
         run: |
-          echo "Checking endpoints..."
           sleep 5
-
-          FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" https://e-sdy.mn || echo "000")
-          API=$(curl -s -o /dev/null -w "%{http_code}" https://api.e-sdy.mn/health || echo "000")
-          ADMIN=$(curl -s -o /dev/null -w "%{http_code}" https://admin.e-sdy.mn || echo "000")
-
-          echo "Frontend: $FRONTEND"
-          echo "API: $API"
-          echo "Admin: $ADMIN"
-
-          if [ "$FRONTEND" != "200" ] || [ "$API" != "200" ] || [ "$ADMIN" != "200" ]; then
-            echo "Warning: Some health checks did not return 200"
-          fi
-
-          echo "Deployment completed!"
+          echo "Frontend: $(curl -s -o /dev/null -w '%{http_code}' https://e-sdy.mn)"
+          echo "API: $(curl -s -o /dev/null -w '%{http_code}' https://api.e-sdy.mn/health)"
+          echo "Admin: $(curl -s -o /dev/null -w '%{http_code}' https://admin.e-sdy.mn)"
