@@ -1,175 +1,67 @@
-# СДЗН Platform
+# СДЗН Платформ (SDYN Platform)
+
+![Deploy](https://github.com/BunnyMN/sdyn-platform/actions/workflows/deploy.yml/badge.svg)
+![Security](https://github.com/BunnyMN/sdyn-platform/actions/workflows/security.yml/badge.svg)
 
 Социал Демократ Залуучуудын Нэгдлийн гишүүнчлэлийн удирдлагын систем.
 
+## Live URLs
+
+| Service | URL |
+|---------|-----|
+| Frontend | https://e-sdy.mn |
+| Admin | https://admin.e-sdy.mn |
+| API | https://api.e-sdy.mn |
+| Auth | https://auth.e-sdy.mn |
+| Monitoring | https://grafana.e-sdy.mn |
+
 ## Tech Stack
 
-- **Backend**: Go 1.22+ (Fiber)
+- **Backend**: Go 1.22 + Fiber
 - **Frontend**: Next.js 14
 - **Database**: PostgreSQL 16 + Redis 7
 - **Auth**: Keycloak 24
 - **Storage**: MinIO
-- **Proxy**: Traefik v3 (Auto SSL)
+- **Proxy**: Traefik v2.11 (Auto SSL)
 - **Monitoring**: Grafana + Prometheus + Loki
+
+## Documentation
+
+Бүх баримт бичгүүд [docs/](./docs/) хавтаст байна.
+
+| # | Document | Description |
+|---|----------|-------------|
+| 1 | [Танилцуулга](./docs/01-ТАНИЛЦУУЛГА.md) | System overview |
+| 2 | [Суулгалт](./docs/02-СУУЛГАЛТ.md) | Installation guide |
+| 3 | [API Guide](./docs/03-API-ГАРЫН-АВЛАГА.md) | REST API docs |
+| 4 | [Admin Guide](./docs/04-АДМИН-ГАРЫН-АВЛАГА.md) | Admin portal |
+| 5 | [Backup](./docs/05-НӨӨЦЛӨЛТ-СЭРГЭЭЛТ.md) | Backup & restore |
+| 6 | [Security](./docs/06-АЮУЛГҮЙ-БАЙДАЛ.md) | Security guide |
+| 7 | [Keycloak](./docs/07-KEYCLOAK-ТОХИРГОО.md) | Auth config |
+| 8 | [Monitoring](./docs/08-МОНИТОРИНГ.md) | Grafana setup |
+| 9 | [Troubleshooting](./docs/09-АЛДАА-ЗАСАХ.md) | Debug guide |
+| 10 | [Development](./docs/10-ХӨГЖҮҮЛЭЛТ.md) | Dev setup |
+| 11 | [Deploy](./docs/11-DEPLOY-ШИНЭЧЛЭЛТ.md) | Deploy guide |
+| 12 | [CI/CD](./docs/12-GITHUB-CICD.md) | GitHub Actions |
 
 ## Quick Start
 
-### 1. Server Setup
-
 ```bash
-# SSH to server
-ssh root@206.189.146.159
+# Clone
+git clone https://github.com/BunnyMN/sdyn-platform.git
+cd sdyn-platform
 
-# Run setup script
-chmod +x scripts/setup-server.sh
-./scripts/setup-server.sh
-```
-
-### 2. Configure Environment
-
-```bash
-# Copy and edit .env file
+# Setup environment
 cp .env.example .env
-nano .env
+# Edit .env with your values
 
-# Generate passwords and update:
-# - POSTGRES_PASSWORD
-# - REDIS_PASSWORD
-# - KEYCLOAK_ADMIN_PASSWORD
-# - MINIO_ROOT_PASSWORD
-# - JWT_SECRET
-# - GRAFANA_ADMIN_PASSWORD
-```
-
-### 3. DNS Configuration
-
-Point these records to `206.189.146.159`:
-
-| Record | Type | Value |
-|--------|------|-------|
-| e-sdy.mn | A | 206.189.146.159 |
-| api.e-sdy.mn | A | 206.189.146.159 |
-| admin.e-sdy.mn | A | 206.189.146.159 |
-| auth.e-sdy.mn | A | 206.189.146.159 |
-| grafana.e-sdy.mn | A | 206.189.146.159 |
-| minio.e-sdy.mn | A | 206.189.146.159 |
-
-### 4. Deploy
-
-```bash
-# Create acme.json for SSL
-touch traefik/acme.json
-chmod 600 traefik/acme.json
-
-# Deploy
-chmod +x scripts/deploy.sh
-./scripts/deploy.sh
-```
-
-## Services
-
-| Service | URL | Port |
-|---------|-----|------|
-| Frontend | https://e-sdy.mn | 3000 |
-| Admin | https://admin.e-sdy.mn | 3001 |
-| API | https://api.e-sdy.mn | 8080 |
-| Keycloak | https://auth.e-sdy.mn | 8080 |
-| Grafana | https://grafana.e-sdy.mn | 3000 |
-| MinIO | https://minio.e-sdy.mn | 9000 |
-
-## API Endpoints
-
-### Authentication
-- `POST /api/v1/auth/login` - Login
-- `POST /api/v1/auth/register` - Register
-- `POST /api/v1/auth/refresh` - Refresh token
-- `POST /api/v1/auth/logout` - Logout
-
-### Members
-- `GET /api/v1/members` - List members
-- `GET /api/v1/members/:id` - Get member
-- `POST /api/v1/members` - Create member
-- `PUT /api/v1/members/:id` - Update member
-- `DELETE /api/v1/members/:id` - Delete member
-
-### Organizations
-- `GET /api/v1/organizations` - List organizations
-- `GET /api/v1/organizations/:id` - Get organization
-- `POST /api/v1/organizations` - Create organization
-- `PUT /api/v1/organizations/:id` - Update organization
-
-### Events
-- `GET /api/v1/events` - List events
-- `GET /api/v1/events/:id` - Get event
-- `POST /api/v1/events` - Create event
-- `PUT /api/v1/events/:id` - Update event
-- `POST /api/v1/events/:id/register` - Register for event
-
-### Fees
-- `GET /api/v1/fees` - List fees
-- `POST /api/v1/fees` - Create fee
-- `PUT /api/v1/fees/:id` - Update fee
-
-## Commands
-
-```bash
-# View logs
-docker compose logs -f backend
-
-# Restart service
-docker compose restart backend
+# Start services
+docker compose up -d
 
 # Check status
 docker compose ps
-
-# Database shell
-docker exec -it sdyn-postgres psql -U sdyn_user -d sdyn_db
-
-# Redis shell
-docker exec -it sdyn-redis redis-cli -a $REDIS_PASSWORD
-
-# Backup
-./scripts/backup.sh
 ```
 
-## Directory Structure
+## License
 
-```
-sdyn-platform/
-├── docker-compose.yml      # Main compose file
-├── .env                    # Environment variables
-├── traefik/               # Traefik configuration
-├── postgres/              # PostgreSQL init scripts
-├── keycloak/              # Keycloak configuration
-├── minio/                 # MinIO configuration
-├── monitoring/            # Prometheus, Grafana, Loki
-├── backend/               # Go API
-├── frontend/              # Next.js web app
-├── admin/                 # Admin portal
-├── scripts/               # Deployment scripts
-└── docs/                  # Documentation
-```
-
-## Maintenance
-
-### Backup
-Backups run daily at 2 AM (cron):
-```bash
-0 2 * * * /home/sdyn/sdyn-platform/scripts/backup.sh
-```
-
-### Updates
-```bash
-cd /home/sdyn/sdyn-platform
-git pull
-./scripts/deploy.sh
-```
-
-### SSL Renewal
-Traefik handles SSL renewal automatically via Let's Encrypt.
-
-## Support
-
-For issues and questions:
-- GitHub Issues
-- Email: admin@e-sdy.mn
+Private - СДЗН
