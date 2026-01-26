@@ -70,7 +70,7 @@ jobs:
           version: "2023.1.7"
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v9
         with:
           working-directory: backend
           version: v1.57
