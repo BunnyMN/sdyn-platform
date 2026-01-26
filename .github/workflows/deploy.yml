@@ -1,0 +1,223 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Service to deploy (all, backend, frontend, admin)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - backend
+          - frontend
+          - admin
+
+env:
+  SERVER_HOST: 206.189.146.159
+  SERVER_USER: root
+  PROJECT_PATH: /home/sdyn/sdyn-platform
+
+jobs:
+  # Backend tests
+  test-backend:
+    name: Test Backend
+    runs-on: ubuntu-latest
+    if: github.event.inputs.service == 'all' || github.event.inputs.service == 'backend' || github.event.inputs.service == ''
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: backend/go.sum
+
+      - name: Run tests
+        working-directory: backend
+        run: |
+          go mod download
+          go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: backend/coverage.out
+          flags: backend
+
+  # Frontend tests
+  test-frontend:
+    name: Test Frontend
+    runs-on: ubuntu-latest
+    if: github.event.inputs.service == 'all' || github.event.inputs.service == 'frontend' || github.event.inputs.service == ''
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Run build
+        working-directory: frontend
+        run: npm run build
+
+  # Admin tests
+  test-admin:
+    name: Test Admin
+    runs-on: ubuntu-latest
+    if: github.event.inputs.service == 'all' || github.event.inputs.service == 'admin' || github.event.inputs.service == ''
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Install dependencies
+        working-directory: admin
+        run: npm ci
+
+      - name: Run lint
+        working-directory: admin
+        run: npm run lint
+
+      - name: Run build
+        working-directory: admin
+        run: npm run build
+
+  # Deploy to production
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [test-backend, test-frontend, test-admin]
+    if: always() && (needs.test-backend.result == 'success' || needs.test-backend.result == 'skipped') && (needs.test-frontend.result == 'success' || needs.test-frontend.result == 'skipped') && (needs.test-admin.result == 'success' || needs.test-admin.result == 'skipped')
+    environment:
+      name: production
+      url: https://e-sdy.mn
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy all services
+        if: github.event.inputs.service == 'all' || github.event.inputs.service == ''
+        run: |
+          ssh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'ENDSSH'
+            cd ${{ env.PROJECT_PATH }}
+
+            echo ">>> Pulling latest code..."
+            git pull origin main
+
+            echo ">>> Building images..."
+            docker compose build --parallel
+
+            echo ">>> Deploying services..."
+            docker compose up -d
+
+            echo ">>> Cleaning up old images..."
+            docker image prune -f
+
+            echo ">>> Checking service health..."
+            sleep 10
+            docker compose ps
+
+            echo ">>> Deployment completed!"
+          ENDSSH
+
+      - name: Deploy backend only
+        if: github.event.inputs.service == 'backend'
+        run: |
+          ssh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'ENDSSH'
+            cd ${{ env.PROJECT_PATH }}
+            git pull origin main
+            docker compose build backend
+            docker compose up -d backend
+            docker compose ps backend
+          ENDSSH
+
+      - name: Deploy frontend only
+        if: github.event.inputs.service == 'frontend'
+        run: |
+          ssh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'ENDSSH'
+            cd ${{ env.PROJECT_PATH }}
+            git pull origin main
+            docker compose build frontend
+            docker compose up -d frontend
+            docker compose ps frontend
+          ENDSSH
+
+      - name: Deploy admin only
+        if: github.event.inputs.service == 'admin'
+        run: |
+          ssh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'ENDSSH'
+            cd ${{ env.PROJECT_PATH }}
+            git pull origin main
+            docker compose build admin
+            docker compose up -d admin
+            docker compose ps admin
+          ENDSSH
+
+      - name: Health check
+        run: |
+          echo "Checking endpoints..."
+          sleep 5
+
+          FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" https://e-sdy.mn)
+          API=$(curl -s -o /dev/null -w "%{http_code}" https://api.e-sdy.mn/health)
+          ADMIN=$(curl -s -o /dev/null -w "%{http_code}" https://admin.e-sdy.mn)
+
+          echo "Frontend: $FRONTEND"
+          echo "API: $API"
+          echo "Admin: $ADMIN"
+
+          if [ "$FRONTEND" != "200" ] || [ "$API" != "200" ] || [ "$ADMIN" != "200" ]; then
+            echo "Health check failed!"
+            exit 1
+          fi
+
+          echo "All services healthy!"
+
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "✅ Deployment successful!"
+          echo "Frontend: https://e-sdy.mn"
+          echo "Admin: https://admin.e-sdy.mn"
+          echo "API: https://api.e-sdy.mn"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed!"
+          echo "Check the logs for details."
