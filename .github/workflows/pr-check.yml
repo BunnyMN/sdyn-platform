@@ -176,7 +176,7 @@ jobs:
 
       - name: Build backend image
         if: needs.changes.outputs.backend == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./backend
           push: false
@@ -186,7 +186,7 @@ jobs:
 
       - name: Build frontend image
         if: needs.changes.outputs.frontend == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./frontend
           push: false
@@ -196,7 +196,7 @@ jobs:
 
       - name: Build admin image
         if: needs.changes.outputs.admin == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./admin
           push: false
