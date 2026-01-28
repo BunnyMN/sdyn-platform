@@ -64,6 +64,13 @@ func main() {
 	feeService := services.NewFeeService(feeRepo)
 	authService := services.NewAuthService(cfg, rdb)
 
+	// Initialize Keycloak validator
+	if err := middleware.InitKeycloakValidator(cfg); err != nil {
+		log.Warn().Err(err).Msg("Failed to initialize Keycloak validator, falling back to legacy JWT auth")
+	} else {
+		log.Info().Msg("Keycloak JWT validation enabled")
+	}
+
 	// Initialize handlers
 	memberHandler := handlers.NewMemberHandler(memberService)
 	orgHandler := handlers.NewOrganizationHandler(orgService)
@@ -121,8 +128,8 @@ func main() {
 	auth.Post("/refresh", authHandler.RefreshToken)
 	auth.Post("/logout", authHandler.Logout)
 
-	// Protected routes
-	protected := api.Group("", middleware.JWTAuth(cfg.JWTSecret))
+	// Protected routes - use Keycloak JWT validation
+	protected := api.Group("", middleware.KeycloakJWTAuth())
 
 	// Members
 	members := protected.Group("/members")

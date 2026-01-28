@@ -16,6 +16,9 @@ require (
 	golang.org/x/crypto v0.18.0
 )
 
+// Note: The Keycloak JWKS validation uses standard crypto/rsa and encoding/base64
+// from the Go standard library - no additional dependencies required
+
 require (
 	github.com/andybalholm/brotli v1.0.5 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect

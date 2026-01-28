@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+import { getKeycloak, getToken, logout } from './keycloak';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v1';
 
@@ -11,12 +12,30 @@ const apiClient: AxiosInstance = axios.create({
   },
 });
 
-// Request interceptor to add auth token
+// Request interceptor to add Keycloak auth token
 apiClient.interceptors.request.use(
-  (config) => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+  async (config) => {
+    if (typeof window !== 'undefined') {
+      try {
+        const keycloak = getKeycloak();
+
+        // Ensure token is fresh (refresh if expires within 30 seconds)
+        if (keycloak.authenticated && keycloak.token) {
+          if (keycloak.isTokenExpired(30)) {
+            try {
+              await keycloak.updateToken(30);
+            } catch (error) {
+              console.error('Failed to refresh token:', error);
+              logout();
+              return Promise.reject(new Error('Session expired'));
+            }
+          }
+          config.headers.Authorization = `Bearer ${keycloak.token}`;
+        }
+      } catch (error) {
+        // Keycloak not initialized yet, continue without token
+        console.debug('Keycloak not ready:', error);
+      }
     }
     return config;
   },
@@ -30,10 +49,14 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Redirect to login on unauthorized
+      // Token is invalid or expired, trigger Keycloak logout
       if (typeof window !== 'undefined') {
-        localStorage.removeItem('admin_token');
-        window.location.href = '/login';
+        try {
+          logout();
+        } catch (e) {
+          // Keycloak not initialized, redirect to login
+          window.location.href = '/login';
+        }
       }
     }
     return Promise.reject(error);
@@ -89,22 +112,16 @@ export const api = {
   },
 };
 
-// Auth API
+// Auth API - Note: Most auth operations are handled by Keycloak directly
 export const authApi = {
-  login: async (email: string, password: string) => {
-    return api.post<{ token: string; user: unknown }>('/auth/login', { email, password });
-  },
-
-  logout: async () => {
-    return api.post('/auth/logout');
-  },
-
+  // Get current user from backend (validates token and returns user details)
   getCurrentUser: async () => {
     return api.get<{ user: unknown }>('/auth/me');
   },
 
-  refreshToken: async () => {
-    return api.post<{ token: string }>('/auth/refresh');
+  // Sync user with backend after Keycloak login
+  syncUser: async () => {
+    return api.post<{ user: unknown }>('/auth/sync');
   },
 };
 

@@ -17,20 +17,53 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { clsx } from 'clsx';
+import { useAuth, ROLES } from '@/lib/auth-context';
+import { LucideIcon } from 'lucide-react';
 
-const navigation = [
+interface NavItem {
+  name: string;
+  href: string;
+  icon: LucideIcon;
+  roles?: string[];
+}
+
+const navigation: NavItem[] = [
   { name: 'Хянах самбар', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Гишүүд', href: '/members', icon: Users },
   { name: 'Байгууллагууд', href: '/organizations', icon: Building2 },
   { name: 'Арга хэмжээ', href: '/events', icon: Calendar },
   { name: 'Гишүүнчлэлийн хураамж', href: '/fees', icon: CreditCard },
   { name: 'Тайлан', href: '/reports', icon: BarChart3 },
-  { name: 'Тохиргоо', href: '/settings', icon: Settings },
+  { name: 'Тохиргоо', href: '/settings', icon: Settings, roles: [ROLES.NATIONAL_ADMIN] },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const { user, logout, hasAnyRole, isNationalAdmin, isProvinceAdmin, isDistrictAdmin } = useAuth();
+
+  // Get user's display name
+  const displayName = user?.fullName || user?.username || 'Админ';
+  const displayEmail = user?.email || '';
+  const displayInitial = displayName.charAt(0).toUpperCase();
+
+  // Get role display text
+  const getRoleDisplay = () => {
+    if (isNationalAdmin) return 'Үндэсний админ';
+    if (isProvinceAdmin) return 'Аймгийн админ';
+    if (isDistrictAdmin) return 'Сумын админ';
+    return 'Админ';
+  };
+
+  // Filter navigation items based on user roles
+  const filteredNavigation = navigation.filter((item) => {
+    if (!item.roles) return true;
+    return hasAnyRole(item.roles);
+  });
+
+  const handleLogout = () => {
+    logout();
+  };
 
   return (
     <aside
@@ -58,7 +91,7 @@ export default function Sidebar() {
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto scrollbar-thin py-4 px-3">
           <ul className="space-y-1">
-            {navigation.map((item) => {
+            {filteredNavigation.map((item) => {
               const isActive = pathname === item.href;
               const Icon = item.icon;
 
@@ -102,29 +135,30 @@ export default function Sidebar() {
             )}
           >
             <div className="w-10 h-10 bg-primary-600 rounded-full flex items-center justify-center">
-              <span className="text-white font-medium">А</span>
+              <span className="text-white font-medium">{displayInitial}</span>
             </div>
             {!collapsed && (
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-white truncate">
-                  Админ
+                  {displayName}
                 </p>
                 <p className="text-xs text-dark-400 truncate">
-                  admin@sdyn.mn
+                  {getRoleDisplay()}
                 </p>
               </div>
             )}
           </div>
-          <Link
-            href="/login"
+          <button
+            onClick={handleLogout}
             className={clsx(
-              'mt-3 flex items-center gap-2 text-dark-400 hover:text-red-400 transition-colors',
+              'mt-3 flex items-center gap-2 text-dark-400 hover:text-red-400 transition-colors w-full',
               collapsed && 'justify-center'
             )}
+            title={collapsed ? 'Гарах' : undefined}
           >
             <LogOut className="w-5 h-5" />
             {!collapsed && <span className="text-sm">Гарах</span>}
-          </Link>
+          </button>
         </div>
       </div>
     </aside>
