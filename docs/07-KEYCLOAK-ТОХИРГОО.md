@@ -294,5 +294,38 @@ docker exec sdyn-keycloak /opt/keycloak/bin/kcadm.sh config credentials \
 - Trailing slash шалгах
 
 ---
-*Баримт бичгийн хувилбар: 1.0*
-*Сүүлд шинэчилсэн: 2026-01-26*
+
+## Одоогийн статус
+
+### Ажиллаж байгаа
+| Функц | Статус |
+|-------|--------|
+| Admin Console | ✅ https://auth.e-sdy.mn/admin |
+| SDYN Realm | ✅ Идэвхтэй |
+| Password Grant Flow | ✅ Ажиллаж байна |
+| Client Credentials Flow | ✅ Ажиллаж байна |
+| sdyn-web client | ✅ Public client |
+| sdyn-admin client | ✅ Public client |
+| sdyn-api client | ✅ Confidential client |
+
+### Test хэрэглэгчид
+```
+testadmin / password123  → national_admin role
+testmember / password123 → member role
+```
+
+### Туршилт
+```bash
+# Password grant
+curl -X POST 'https://auth.e-sdy.mn/realms/sdyn/protocol/openid-connect/token' \
+  -d 'username=testadmin&password=password123&grant_type=password&client_id=sdyn-web'
+
+# Client credentials
+curl -X POST 'https://auth.e-sdy.mn/realms/sdyn/protocol/openid-connect/token' \
+  -d 'grant_type=client_credentials&client_id=sdyn-api&client_secret=<secret>'
+```
+
+---
+
+*Баримт бичгийн хувилбар: 1.1*
+*Сүүлд шинэчилсэн: 2026-01-28*
