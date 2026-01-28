@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
@@ -16,8 +17,12 @@ import {
   Bell,
   CreditCard,
   Building,
-  BarChart
+  BarChart,
+  Loader2,
+  Shield,
 } from 'lucide-react'
+import { useAuth } from '@/lib/auth-context'
+import { ROLES } from '@/lib/keycloak'
 
 const navigation = [
   { name: 'Хянах самбар', href: '/dashboard', icon: Home },
@@ -37,28 +42,50 @@ export default function DashboardLayout({
   const pathname = usePathname()
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [user, setUser] = useState<any>(null)
+  const { isAuthenticated, isLoading, user, logout, isAdmin, isNationalAdmin, login } = useAuth()
 
   useEffect(() => {
-    const token = localStorage.getItem('access_token')
-    const userData = localStorage.getItem('user')
-
-    if (!token) {
-      router.push('/login')
-      return
+    if (!isLoading && !isAuthenticated) {
+      login()
     }
-
-    if (userData) {
-      setUser(JSON.parse(userData))
-    }
-  }, [router])
+  }, [isLoading, isAuthenticated, login])
 
   const handleLogout = () => {
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('refresh_token')
-    localStorage.removeItem('user')
-    router.push('/login')
+    logout(window.location.origin)
   }
+
+  // Show loading while checking authentication
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin text-blue-600 mx-auto" />
+          <p className="mt-4 text-gray-600">Уншиж байна...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Don't render if not authenticated
+  if (!isAuthenticated) {
+    return null
+  }
+
+  // Get role badge
+  const getRoleBadge = () => {
+    if (isNationalAdmin) {
+      return { text: 'Үндэсний админ', color: 'bg-purple-100 text-purple-800' }
+    }
+    if (user?.roles.includes(ROLES.PROVINCE_ADMIN)) {
+      return { text: 'Аймгийн админ', color: 'bg-blue-100 text-blue-800' }
+    }
+    if (user?.roles.includes(ROLES.DISTRICT_ADMIN)) {
+      return { text: 'Дүүргийн админ', color: 'bg-green-100 text-green-800' }
+    }
+    return { text: 'Гишүүн', color: 'bg-gray-100 text-gray-800' }
+  }
+
+  const roleBadge = getRoleBadge()
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -163,6 +190,14 @@ export default function DashboardLayout({
             <div className="flex-1 lg:flex-none" />
 
             <div className="flex items-center space-x-4">
+              {/* Role badge */}
+              {isAdmin && (
+                <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${roleBadge.color}`}>
+                  <Shield className="w-3 h-3" />
+                  <span>{roleBadge.text}</span>
+                </div>
+              )}
+
               <button className="relative text-gray-500 hover:text-gray-700">
                 <Bell className="w-6 h-6" />
                 <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
@@ -174,17 +209,21 @@ export default function DashboardLayout({
                 <button className="flex items-center space-x-2">
                   <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
                     <span className="text-blue-600 font-medium text-sm">
-                      {user?.first_name?.[0] || 'U'}
+                      {user?.firstName?.[0] || user?.username?.[0] || 'U'}
                     </span>
                   </div>
                   <span className="hidden sm:block text-sm font-medium text-gray-700">
-                    {user?.first_name || 'User'}
+                    {user?.firstName || user?.username || 'User'}
                   </span>
                   <ChevronDown className="w-4 h-4 text-gray-500" />
                 </button>
 
                 <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg border hidden group-hover:block">
                   <div className="py-1">
+                    <div className="px-4 py-2 border-b">
+                      <p className="text-sm font-medium text-gray-900">{user?.fullName}</p>
+                      <p className="text-xs text-gray-500">{user?.email}</p>
+                    </div>
                     <Link
                       href="/dashboard/profile"
                       className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"

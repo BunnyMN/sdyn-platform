@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { getKeycloak, getToken } from './keycloak'
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080',
@@ -7,13 +8,24 @@ const api = axios.create({
   },
 })
 
-// Request interceptor to add auth token
+// Request interceptor to add auth token from Keycloak
 api.interceptors.request.use(
-  (config) => {
+  async (config) => {
     if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('access_token')
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`
+      try {
+        const keycloak = getKeycloak()
+
+        // Refresh token if needed (60 seconds before expiry)
+        if (keycloak.authenticated && keycloak.isTokenExpired(60)) {
+          await keycloak.updateToken(60)
+        }
+
+        const token = getToken()
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`
+        }
+      } catch (error) {
+        console.error('Error getting token:', error)
       }
     }
     return config
@@ -23,61 +35,21 @@ api.interceptors.request.use(
   }
 )
 
-// Response interceptor to handle errors and token refresh
+// Response interceptor to handle errors
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config
-
-    // If 401 and not already retrying, try to refresh token
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true
-
-      try {
-        const refreshToken = localStorage.getItem('refresh_token')
-        if (refreshToken) {
-          const response = await axios.post(
-            `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/refresh`,
-            { refresh_token: refreshToken }
-          )
-
-          const { access_token, refresh_token } = response.data
-          localStorage.setItem('access_token', access_token)
-          localStorage.setItem('refresh_token', refresh_token)
-
-          originalRequest.headers.Authorization = `Bearer ${access_token}`
-          return api(originalRequest)
-        }
-      } catch (refreshError) {
-        // Refresh failed, redirect to login
-        localStorage.removeItem('access_token')
-        localStorage.removeItem('refresh_token')
-        localStorage.removeItem('user')
-        if (typeof window !== 'undefined') {
-          window.location.href = '/login'
-        }
+    // If 401, redirect to login
+    if (error.response?.status === 401) {
+      if (typeof window !== 'undefined') {
+        const keycloak = getKeycloak()
+        keycloak.logout({ redirectUri: window.location.origin + '/login' })
       }
     }
 
     return Promise.reject(error)
   }
 )
-
-// Auth
-export const authApi = {
-  login: (data: { email: string; password: string }) =>
-    api.post('/api/v1/auth/login', data),
-  register: (data: {
-    email: string
-    password: string
-    first_name: string
-    last_name: string
-    phone: string
-  }) => api.post('/api/v1/auth/register', data),
-  refresh: (refreshToken: string) =>
-    api.post('/api/v1/auth/refresh', { refresh_token: refreshToken }),
-  logout: () => api.post('/api/v1/auth/logout'),
-}
 
 // Members
 export const membersApi = {
