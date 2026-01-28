@@ -307,6 +307,8 @@ docker exec sdyn-keycloak /opt/keycloak/bin/kcadm.sh config credentials \
 | sdyn-web client | ✅ Public client |
 | sdyn-admin client | ✅ Public client |
 | sdyn-api client | ✅ Confidential client |
+| Google OAuth | ✅ Identity Provider |
+| Facebook OAuth | ✅ Identity Provider |
 
 ### Test хэрэглэгчид
 ```
@@ -327,5 +329,5 @@ curl -X POST 'https://auth.e-sdy.mn/realms/sdyn/protocol/openid-connect/token' \
 
 ---
 
-*Баримт бичгийн хувилбар: 1.1*
-*Сүүлд шинэчилсэн: 2026-01-28*
+*Баримт бичгийн хувилбар: 1.2*
+*Сүүлд шинэчилсэн: 2026-01-28 - Google, Facebook OAuth нэмсэн*
