@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Plus,
   Edit,
@@ -12,92 +12,28 @@ import {
   UserPlus,
   Download,
   Upload,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react';
 import Header from '@/components/Header';
 import DataTable from '@/components/DataTable';
 import Modal, { FormField, ModalFooter } from '@/components/Modal';
 import { getStatusDisplay, formatDate, formatPhone } from '@/lib/utils';
 import { clsx } from 'clsx';
-
-interface Member {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone: string;
-  membershipNumber: string;
-  organizationName: string;
-  status: 'active' | 'inactive' | 'pending';
-  joinedAt: string;
-}
-
-// Mock data
-const mockMembers: Member[] = [
-  {
-    id: '1',
-    firstName: 'Батбаяр',
-    lastName: 'Бат-Эрдэнэ',
-    email: 'batbayar@example.com',
-    phone: '99112233',
-    membershipNumber: 'СДЗН-2024-0001',
-    organizationName: 'ТЭХК',
-    status: 'active',
-    joinedAt: '2024-01-15',
-  },
-  {
-    id: '2',
-    firstName: 'Ганзориг',
-    lastName: 'Гантөмөр',
-    email: 'ganzorig@example.com',
-    phone: '88112233',
-    membershipNumber: 'СДЗН-2024-0002',
-    organizationName: 'ДБТК',
-    status: 'active',
-    joinedAt: '2024-01-20',
-  },
-  {
-    id: '3',
-    firstName: 'Оюунчимэг',
-    lastName: 'Отгонбаяр',
-    email: 'oyunchimeg@example.com',
-    phone: '77112233',
-    membershipNumber: 'СДЗН-2024-0003',
-    organizationName: 'ЭБТК',
-    status: 'pending',
-    joinedAt: '2024-02-01',
-  },
-  {
-    id: '4',
-    firstName: 'Болдбаатар',
-    lastName: 'Баясгалан',
-    email: 'boldbaatar@example.com',
-    phone: '66112233',
-    membershipNumber: 'СДЗН-2024-0004',
-    organizationName: 'ТЭХК',
-    status: 'inactive',
-    joinedAt: '2023-06-15',
-  },
-  {
-    id: '5',
-    firstName: 'Цэцэгмаа',
-    lastName: 'Чулуунбат',
-    email: 'tsetsegmaa@example.com',
-    phone: '55112233',
-    membershipNumber: 'СДЗН-2024-0005',
-    organizationName: 'ДБТК',
-    status: 'active',
-    joinedAt: '2024-01-25',
-  },
-];
+import { useMembers, useMemberMutations, useOrganizations } from '@/hooks/useApi';
+import { Member } from '@/lib/api';
 
 export default function MembersPage() {
-  const [members, setMembers] = useState<Member[]>(mockMembers);
+  const { data: members, loading, error, total, page, totalPages, refetch, updateParams } = useMembers();
+  const { createMember, updateMember, deleteMember, loading: mutationLoading } = useMemberMutations();
+  const { data: organizations } = useOrganizations();
+
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const isLoading = mutationLoading;
 
   // Form state
   const [formData, setFormData] = useState({
@@ -149,52 +85,86 @@ export default function MembersPage() {
   };
 
   const handleSaveCreate = async () => {
-    setIsLoading(true);
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    const newMember: Member = {
-      id: String(members.length + 1),
-      ...formData,
-      membershipNumber: `СДЗН-2024-${String(members.length + 1).padStart(4, '0')}`,
-      joinedAt: new Date().toISOString().split('T')[0],
-    };
-
-    setMembers([...members, newMember]);
-    setIsCreateModalOpen(false);
-    resetForm();
-    setIsLoading(false);
+    try {
+      await createMember({
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        email: formData.email,
+        phone: formData.phone,
+        organizationName: formData.organizationName,
+        status: formData.status,
+      });
+      setIsCreateModalOpen(false);
+      resetForm();
+      refetch();
+    } catch (err) {
+      console.error('Failed to create member:', err);
+    }
   };
 
   const handleSaveEdit = async () => {
     if (!selectedMember) return;
 
-    setIsLoading(true);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    setMembers(
-      members.map((m) =>
-        m.id === selectedMember.id ? { ...m, ...formData } : m
-      )
-    );
-
-    setIsEditModalOpen(false);
-    setSelectedMember(null);
-    resetForm();
-    setIsLoading(false);
+    try {
+      await updateMember(selectedMember.id, {
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        email: formData.email,
+        phone: formData.phone,
+        organizationName: formData.organizationName,
+        status: formData.status,
+      });
+      setIsEditModalOpen(false);
+      setSelectedMember(null);
+      resetForm();
+      refetch();
+    } catch (err) {
+      console.error('Failed to update member:', err);
+    }
   };
 
   const handleConfirmDelete = async () => {
     if (!selectedMember) return;
 
-    setIsLoading(true);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    setMembers(members.filter((m) => m.id !== selectedMember.id));
-    setIsDeleteModalOpen(false);
-    setSelectedMember(null);
-    setIsLoading(false);
+    try {
+      await deleteMember(selectedMember.id);
+      setIsDeleteModalOpen(false);
+      setSelectedMember(null);
+      refetch();
+    } catch (err) {
+      console.error('Failed to delete member:', err);
+    }
   };
+
+  // Loading state
+  if (loading && members.length === 0) {
+    return (
+      <div>
+        <Header title="Гишүүд" subtitle="Гишүүдийн бүртгэл удирдах" />
+        <div className="p-6 flex items-center justify-center min-h-[400px]">
+          <div className="flex items-center gap-3 text-dark-400">
+            <Loader2 className="w-6 h-6 animate-spin" />
+            <span>Уншиж байна...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div>
+        <Header title="Гишүүд" subtitle="Гишүүдийн бүртгэл удирдах" />
+        <div className="p-6 flex items-center justify-center min-h-[400px]">
+          <div className="flex items-center gap-3 text-red-400">
+            <AlertCircle className="w-6 h-6" />
+            <span>Алдаа гарлаа: {error}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const columns = [
     {

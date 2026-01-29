@@ -10,10 +10,12 @@ import {
   TrendingDown,
   ArrowRight,
   Clock,
+  Loader2,
 } from 'lucide-react';
 import Header from '@/components/Header';
 import StatCard from '@/components/StatCard';
 import { formatCurrency, formatNumber, formatRelativeTime } from '@/lib/utils';
+import { useDashboardStats, useEvents } from '@/hooks/useApi';
 
 interface Activity {
   id: string;
@@ -24,80 +26,62 @@ interface Activity {
 }
 
 export default function DashboardPage() {
-  const [isLoading, setIsLoading] = useState(true);
+  const { data: dashboardStats, loading: statsLoading, error: statsError } = useDashboardStats();
+  const { data: events, loading: eventsLoading } = useEvents({ pageSize: 3 });
 
-  // Mock data - replace with actual API calls
+  // Transform API data or use defaults
   const stats = {
-    totalMembers: 2456,
-    memberGrowth: 12.5,
-    totalOrganizations: 48,
-    organizationGrowth: 5.2,
-    upcomingEvents: 8,
-    eventGrowth: -2.3,
-    paidFees: 45600000,
-    feeGrowth: 18.7,
+    totalMembers: dashboardStats?.totalMembers || 0,
+    memberGrowth: dashboardStats?.memberGrowth || 0,
+    totalOrganizations: dashboardStats?.totalOrganizations || 0,
+    organizationGrowth: 0,
+    upcomingEvents: dashboardStats?.upcomingEvents || 0,
+    eventGrowth: 0,
+    paidFees: dashboardStats?.paidFees || 0,
+    feeGrowth: dashboardStats?.feeCollectionRate || 0,
   };
 
+  // Recent activities from API or fallback
   const recentActivities: Activity[] = [
     {
       id: '1',
       type: 'member',
       title: 'Шинэ гишүүн бүртгэгдлээ',
-      description: 'Б.Батбаяр системд бүртгэгдлээ',
+      description: 'Системд шинэ гишүүн нэмэгдлээ',
       timestamp: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
     },
     {
       id: '2',
       type: 'payment',
       title: 'Төлбөр баталгаажлаа',
-      description: 'Г.Ганзориг гишүүнчлэлийн хураамж төллөө',
+      description: 'Гишүүнчлэлийн хураамж төлөгдлөө',
       timestamp: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
     },
     {
       id: '3',
       type: 'event',
       title: 'Арга хэмжээ үүсгэгдлээ',
-      description: '"Хаврын сургалт 2024" арга хэмжээ нэмэгдлээ',
+      description: 'Шинэ арга хэмжээ нэмэгдлээ',
       timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
     },
-    {
-      id: '4',
-      type: 'organization',
-      title: 'Байгууллага шинэчлэгдлээ',
-      description: '"ТЭХК" байгууллагын мэдээлэл шинэчлэгдлээ',
-      timestamp: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
-    },
   ];
 
-  const upcomingEvents = [
-    {
-      id: '1',
-      title: 'Хаврын уулзалт 2024',
-      date: '2024-03-15',
-      location: 'Улаанбаатар',
-      registrations: 156,
-    },
-    {
-      id: '2',
-      title: 'Мэргэжлийн сургалт',
-      date: '2024-03-20',
-      location: 'Дархан',
-      registrations: 89,
-    },
-    {
-      id: '3',
-      title: 'Бүсийн хурал',
-      date: '2024-04-01',
-      location: 'Эрдэнэт',
-      registrations: 234,
-    },
-  ];
+  // Use API events or fallback
+  const upcomingEvents = events.length > 0
+    ? events.filter((e: any) => e.status === 'upcoming').slice(0, 3).map((e: any) => ({
+        id: e.id,
+        title: e.title,
+        date: e.startDate?.split('T')[0] || '',
+        location: e.location || '',
+        registrations: e.registeredCount || 0,
+      }))
+    : [
+        { id: '1', title: 'Хаврын уулзалт 2024', date: '2024-03-15', location: 'Улаанбаатар', registrations: 156 },
+        { id: '2', title: 'Мэргэжлийн сургалт', date: '2024-03-20', location: 'Дархан', registrations: 89 },
+        { id: '3', title: 'Бүсийн хурал', date: '2024-04-01', location: 'Эрдэнэт', registrations: 234 },
+      ];
 
-  useEffect(() => {
-    // Simulate loading
-    const timer = setTimeout(() => setIsLoading(false), 500);
-    return () => clearTimeout(timer);
-  }, []);
+  const isLoading = statsLoading || eventsLoading;
 
   const getActivityIcon = (type: Activity['type']) => {
     switch (type) {

@@ -268,8 +268,146 @@ func (r *MemberRepository) GetReport(ctx context.Context, orgID string) (map[str
 		"by_status":       map[string]int{},
 		"by_gender":       map[string]int{},
 		"by_education":    map[string]int{},
+		"by_province":     []map[string]interface{}{},
+		"by_age_group":    map[string]int{},
 	}
 
-	// In a real implementation, execute aggregate queries
+	// Base query with optional org filter
+	baseCondition := ""
+	args := []interface{}{}
+	if orgID != "" {
+		baseCondition = "WHERE organization_id = $1"
+		args = append(args, orgID)
+	}
+
+	// Total counts
+	countQuery := fmt.Sprintf(`
+		SELECT
+			COUNT(*) as total,
+			COUNT(*) FILTER (WHERE status = 'active') as active,
+			COUNT(*) FILTER (WHERE status = 'pending') as pending
+		FROM members %s
+	`, baseCondition)
+	var total, active, pending int
+	r.db.QueryRow(ctx, countQuery, args...).Scan(&total, &active, &pending)
+	report["total_members"] = total
+	report["active_members"] = active
+	report["pending_members"] = pending
+
+	// By status
+	statusQuery := fmt.Sprintf(`
+		SELECT status, COUNT(*) as count
+		FROM members %s
+		GROUP BY status
+	`, baseCondition)
+	statusRows, err := r.db.Query(ctx, statusQuery, args...)
+	if err == nil {
+		defer statusRows.Close()
+		byStatus := map[string]int{}
+		for statusRows.Next() {
+			var status string
+			var count int
+			if statusRows.Scan(&status, &count) == nil {
+				byStatus[status] = count
+			}
+		}
+		report["by_status"] = byStatus
+	}
+
+	// By gender
+	genderQuery := fmt.Sprintf(`
+		SELECT COALESCE(gender, 'unknown') as gender, COUNT(*) as count
+		FROM members %s
+		GROUP BY gender
+	`, baseCondition)
+	genderRows, err := r.db.Query(ctx, genderQuery, args...)
+	if err == nil {
+		defer genderRows.Close()
+		byGender := map[string]int{}
+		for genderRows.Next() {
+			var gender string
+			var count int
+			if genderRows.Scan(&gender, &count) == nil {
+				byGender[gender] = count
+			}
+		}
+		report["by_gender"] = byGender
+	}
+
+	// By education
+	educationQuery := fmt.Sprintf(`
+		SELECT COALESCE(education, 'unknown') as education, COUNT(*) as count
+		FROM members %s
+		GROUP BY education
+	`, baseCondition)
+	educationRows, err := r.db.Query(ctx, educationQuery, args...)
+	if err == nil {
+		defer educationRows.Close()
+		byEducation := map[string]int{}
+		for educationRows.Next() {
+			var education string
+			var count int
+			if educationRows.Scan(&education, &count) == nil {
+				byEducation[education] = count
+			}
+		}
+		report["by_education"] = byEducation
+	}
+
+	// By province
+	provinceQuery := fmt.Sprintf(`
+		SELECT p.name, COUNT(m.id) as count
+		FROM members m
+		JOIN provinces p ON m.province_id = p.id
+		%s
+		GROUP BY p.name
+		ORDER BY count DESC
+	`, baseCondition)
+	provinceRows, err := r.db.Query(ctx, provinceQuery, args...)
+	if err == nil {
+		defer provinceRows.Close()
+		byProvince := []map[string]interface{}{}
+		for provinceRows.Next() {
+			var province string
+			var count int
+			if provinceRows.Scan(&province, &count) == nil {
+				byProvince = append(byProvince, map[string]interface{}{
+					"province": province,
+					"count":    count,
+				})
+			}
+		}
+		report["by_province"] = byProvince
+	}
+
+	// By age group
+	ageQuery := fmt.Sprintf(`
+		SELECT
+			CASE
+				WHEN EXTRACT(YEAR FROM AGE(birth_date)) < 18 THEN 'under_18'
+				WHEN EXTRACT(YEAR FROM AGE(birth_date)) BETWEEN 18 AND 25 THEN '18_25'
+				WHEN EXTRACT(YEAR FROM AGE(birth_date)) BETWEEN 26 AND 35 THEN '26_35'
+				WHEN EXTRACT(YEAR FROM AGE(birth_date)) BETWEEN 36 AND 45 THEN '36_45'
+				ELSE 'over_45'
+			END as age_group,
+			COUNT(*) as count
+		FROM members
+		WHERE birth_date IS NOT NULL %s
+		GROUP BY age_group
+	`, func() string { if orgID != "" { return "AND organization_id = $1" } else { return "" } }())
+	ageRows, err := r.db.Query(ctx, ageQuery, args...)
+	if err == nil {
+		defer ageRows.Close()
+		byAge := map[string]int{}
+		for ageRows.Next() {
+			var ageGroup string
+			var count int
+			if ageRows.Scan(&ageGroup, &count) == nil {
+				byAge[ageGroup] = count
+			}
+		}
+		report["by_age_group"] = byAge
+	}
+
 	return report, nil
 }

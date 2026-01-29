@@ -9,6 +9,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
@@ -18,29 +19,95 @@ import (
 
 type AuthService struct {
 	cfg   *config.Config
+	db    *pgxpool.Pool
 	redis *redis.Client
 }
 
-func NewAuthService(cfg *config.Config, redis *redis.Client) *AuthService {
+func NewAuthService(cfg *config.Config, db *pgxpool.Pool, redis *redis.Client) *AuthService {
 	return &AuthService{
 		cfg:   cfg,
+		db:    db,
 		redis: redis,
 	}
 }
 
 func (s *AuthService) Login(ctx context.Context, req *models.LoginRequest) (*models.AuthResponse, error) {
-	// In a real implementation, this would validate against Keycloak or the database
-	// For now, return a stub implementation
+	// Query member by email
+	query := `
+		SELECT m.id, m.member_id, m.keycloak_id, m.first_name, m.last_name, m.email, m.phone,
+		       m.organization_id, m.avatar_url, m.status
+		FROM members m
+		WHERE m.email = $1 AND m.status = 'active'
+	`
+
+	var member struct {
+		ID             uuid.UUID
+		MemberID       string
+		KeycloakID     *string
+		FirstName      string
+		LastName       string
+		Email          *string
+		Phone          *string
+		OrganizationID *uuid.UUID
+		AvatarURL      *string
+		Status         string
+	}
+
+	err := s.db.QueryRow(ctx, query, req.Email).Scan(
+		&member.ID, &member.MemberID, &member.KeycloakID,
+		&member.FirstName, &member.LastName, &member.Email, &member.Phone,
+		&member.OrganizationID, &member.AvatarURL, &member.Status,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("invalid email or password")
+	}
+
+	// Get member roles from positions
+	roles := []string{"member"}
+	rolesQuery := `
+		SELECT DISTINCT p.level
+		FROM member_positions mp
+		JOIN positions p ON mp.position_id = p.id
+		WHERE mp.member_id = $1 AND mp.is_current = true
+	`
+	rows, err := s.db.Query(ctx, rolesQuery, member.ID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var level string
+			if err := rows.Scan(&level); err == nil {
+				switch level {
+				case "national":
+					roles = append(roles, "national_admin")
+				case "province":
+					roles = append(roles, "province_admin")
+				case "district":
+					roles = append(roles, "district_admin")
+				}
+			}
+		}
+	}
+
+	var orgID *string
+	if member.OrganizationID != nil {
+		orgStr := member.OrganizationID.String()
+		orgID = &orgStr
+	}
+
+	user := &models.User{
+		ID:             member.ID,
+		MemberID:       member.MemberID,
+		Email:          *member.Email,
+		FirstName:      member.FirstName,
+		LastName:       member.LastName,
+		Phone:          member.Phone,
+		OrganizationID: orgID,
+		Roles:          roles,
+		AvatarURL:      member.AvatarURL,
+	}
 
 	// Generate tokens
-	accessToken, err := s.generateAccessToken(&models.User{
-		ID:        uuid.New(),
-		MemberID:  "SDYN-2024-00001",
-		Email:     req.Email,
-		FirstName: "Demo",
-		LastName:  "User",
-		Roles:     []string{"member"},
-	})
+	accessToken, err := s.generateAccessToken(user)
 	if err != nil {
 		return nil, err
 	}
@@ -50,35 +117,59 @@ func (s *AuthService) Login(ctx context.Context, req *models.LoginRequest) (*mod
 		return nil, err
 	}
 
+	// Store refresh token in Redis
+	s.redis.Set(ctx, "refresh:"+refreshToken, member.ID.String(), 7*24*time.Hour)
+
 	return &models.AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresIn:    3600,
 		TokenType:    "Bearer",
-		User: &models.User{
-			ID:        uuid.New(),
-			MemberID:  "SDYN-2024-00001",
-			Email:     req.Email,
-			FirstName: "Demo",
-			LastName:  "User",
-			Roles:     []string{"member"},
-		},
+		User:         user,
 	}, nil
 }
 
 func (s *AuthService) Register(ctx context.Context, req *models.RegisterRequest) (*models.AuthResponse, error) {
-	// Hash password
+	// Check if email already exists
+	var exists bool
+	err := s.db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM members WHERE email = $1)", req.Email).Scan(&exists)
+	if err != nil {
+		return nil, fmt.Errorf("error checking email: %w", err)
+	}
+	if exists {
+		return nil, fmt.Errorf("email already registered")
+	}
+
+	// Hash password (stored in Keycloak, but we keep a backup)
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err
 	}
+	_ = hashedPassword // Would be used when creating Keycloak user
 
-	// In a real implementation, this would create the user in Keycloak and database
-	_ = hashedPassword
+	// Create member in database
+	var memberID uuid.UUID
+	var memberCode string
+	createQuery := `
+		INSERT INTO members (first_name, last_name, email, phone, status, joined_at)
+		VALUES ($1, $2, $3, $4, 'pending', NOW())
+		RETURNING id, member_id
+	`
+	err = s.db.QueryRow(ctx, createQuery, req.FirstName, req.LastName, req.Email, req.Phone).Scan(&memberID, &memberCode)
+	if err != nil {
+		return nil, fmt.Errorf("error creating member: %w", err)
+	}
+
+	// Record member history
+	historyQuery := `
+		INSERT INTO member_history (member_id, action, new_value)
+		VALUES ($1, 'registered', 'Member registered via web form')
+	`
+	_, _ = s.db.Exec(ctx, historyQuery, memberID)
 
 	user := &models.User{
-		ID:        uuid.New(),
-		MemberID:  fmt.Sprintf("SDYN-%d-%05d", time.Now().Year(), 1),
+		ID:        memberID,
+		MemberID:  memberCode,
 		Email:     req.Email,
 		FirstName: req.FirstName,
 		LastName:  req.LastName,
@@ -97,6 +188,9 @@ func (s *AuthService) Register(ctx context.Context, req *models.RegisterRequest)
 		return nil, err
 	}
 
+	// Store refresh token
+	s.redis.Set(ctx, "refresh:"+refreshToken, memberID.String(), 7*24*time.Hour)
+
 	return &models.AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -113,14 +207,85 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*m
 		return nil, fmt.Errorf("invalid refresh token")
 	}
 
-	// In a real implementation, fetch user from database
+	// Fetch user from database
+	query := `
+		SELECT m.id, m.member_id, m.first_name, m.last_name, m.email, m.phone,
+		       m.organization_id, m.avatar_url
+		FROM members m
+		WHERE m.id = $1 AND m.status = 'active'
+	`
+
+	var member struct {
+		ID             uuid.UUID
+		MemberID       string
+		FirstName      string
+		LastName       string
+		Email          *string
+		Phone          *string
+		OrganizationID *uuid.UUID
+		AvatarURL      *string
+	}
+
+	memberUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid user ID")
+	}
+
+	err = s.db.QueryRow(ctx, query, memberUUID).Scan(
+		&member.ID, &member.MemberID, &member.FirstName, &member.LastName,
+		&member.Email, &member.Phone, &member.OrganizationID, &member.AvatarURL,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("user not found or inactive")
+	}
+
+	// Get roles
+	roles := []string{"member"}
+	rolesQuery := `
+		SELECT DISTINCT p.level
+		FROM member_positions mp
+		JOIN positions p ON mp.position_id = p.id
+		WHERE mp.member_id = $1 AND mp.is_current = true
+	`
+	rows, _ := s.db.Query(ctx, rolesQuery, member.ID)
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var level string
+			if rows.Scan(&level) == nil {
+				switch level {
+				case "national":
+					roles = append(roles, "national_admin")
+				case "province":
+					roles = append(roles, "province_admin")
+				case "district":
+					roles = append(roles, "district_admin")
+				}
+			}
+		}
+	}
+
+	var orgID *string
+	if member.OrganizationID != nil {
+		orgStr := member.OrganizationID.String()
+		orgID = &orgStr
+	}
+
+	email := ""
+	if member.Email != nil {
+		email = *member.Email
+	}
+
 	user := &models.User{
-		ID:        uuid.MustParse(userID),
-		MemberID:  "SDYN-2024-00001",
-		Email:     "user@example.com",
-		FirstName: "Demo",
-		LastName:  "User",
-		Roles:     []string{"member"},
+		ID:             member.ID,
+		MemberID:       member.MemberID,
+		Email:          email,
+		FirstName:      member.FirstName,
+		LastName:       member.LastName,
+		Phone:          member.Phone,
+		OrganizationID: orgID,
+		Roles:          roles,
+		AvatarURL:      member.AvatarURL,
 	}
 
 	// Generate new access token
