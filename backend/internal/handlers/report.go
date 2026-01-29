@@ -193,3 +193,33 @@ func DashboardReport(c *fiber.Ctx) error {
 
 	return c.JSON(stats)
 }
+
+// ExportReport handles export requests for various report types
+func ExportReport(c *fiber.Ctx) error {
+	reportType := c.Params("type")
+
+	// Validate report type
+	validTypes := map[string]bool{
+		"members":       true,
+		"fees":          true,
+		"events":        true,
+		"organizations": true,
+	}
+
+	if !validTypes[reportType] {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":   "Bad Request",
+			"message": "Invalid report type. Valid types: members, fees, events, organizations",
+		})
+	}
+
+	// For now, return a placeholder response
+	// In production, this would generate CSV/Excel files
+	return c.JSON(fiber.Map{
+		"message": "Export request received",
+		"type":    reportType,
+		"format":  c.Query("format", "csv"),
+		"status":  "processing",
+		"note":    "Export functionality will be implemented with file generation",
+	})
+}

@@ -315,10 +315,52 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*m
 	}, nil
 }
 
-func (s *AuthService) Logout(ctx context.Context, authHeader string) error {
+func (s *AuthService) Logout(ctx context.Context, userID, tokenID string, tokenExp time.Time) error {
 	// Add token to blacklist
-	// In a real implementation, extract token and add to Redis blacklist
+	if tokenID != "" {
+		blacklistKey := "token:blacklist:" + tokenID
+		ttl := time.Until(tokenExp)
+		if ttl <= 0 {
+			ttl = time.Hour
+		}
+		if err := s.redis.Set(ctx, blacklistKey, userID, ttl).Err(); err != nil {
+			return fmt.Errorf("failed to blacklist token: %w", err)
+		}
+	}
+
+	// Store user session invalidation time
+	invalidateKey := "user:tokens:" + userID + ":invalidated_at"
+	s.redis.Set(ctx, invalidateKey, time.Now().Unix(), 24*time.Hour)
+
 	return nil
+}
+
+// LogoutAllSessions invalidates all sessions for a user
+func (s *AuthService) LogoutAllSessions(ctx context.Context, userID string) error {
+	// Find and delete all refresh tokens for this user
+	pattern := "refresh:*"
+	iter := s.redis.Scan(ctx, 0, pattern, 100).Iterator()
+	for iter.Next(ctx) {
+		key := iter.Val()
+		storedUserID, err := s.redis.Get(ctx, key).Result()
+		if err == nil && storedUserID == userID {
+			s.redis.Del(ctx, key)
+		}
+	}
+
+	// Mark all tokens as invalidated
+	invalidateKey := "user:tokens:" + userID + ":invalidated_at"
+	return s.redis.Set(ctx, invalidateKey, time.Now().Unix(), 24*time.Hour).Err()
+}
+
+// IsTokenBlacklisted checks if a token is blacklisted
+func (s *AuthService) IsTokenBlacklisted(ctx context.Context, tokenID string) (bool, error) {
+	key := "token:blacklist:" + tokenID
+	exists, err := s.redis.Exists(ctx, key).Result()
+	if err != nil {
+		return false, err
+	}
+	return exists > 0, nil
 }
 
 func (s *AuthService) ChangePassword(ctx context.Context, userID string, req *models.ChangePasswordRequest) error {

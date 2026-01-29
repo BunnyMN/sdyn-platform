@@ -19,6 +19,7 @@ import (
 	"github.com/sdyn/backend/internal/config"
 	"github.com/sdyn/backend/internal/handlers"
 	"github.com/sdyn/backend/internal/middleware"
+	"github.com/sdyn/backend/internal/models"
 	"github.com/sdyn/backend/internal/repository"
 	"github.com/sdyn/backend/internal/services"
 	"github.com/sdyn/backend/pkg/database"
@@ -62,7 +63,8 @@ func main() {
 	orgService := services.NewOrganizationService(orgRepo)
 	eventService := services.NewEventService(eventRepo)
 	feeService := services.NewFeeService(feeRepo)
-	authService := services.NewAuthService(cfg, rdb)
+	authService := services.NewAuthService(cfg, db, rdb)
+	authzService := services.NewAuthorizationService(db, rdb)
 
 	// Initialize Keycloak validator
 	if err := middleware.InitKeycloakValidator(cfg); err != nil {
@@ -70,6 +72,9 @@ func main() {
 	} else {
 		log.Info().Msg("Keycloak JWT validation enabled")
 	}
+
+	// Initialize authorization service for RBAC
+	middleware.InitAuthorizationService(authzService)
 
 	// Initialize handlers
 	memberHandler := handlers.NewMemberHandler(memberService)
@@ -128,61 +133,72 @@ func main() {
 	auth.Post("/refresh", authHandler.RefreshToken)
 	auth.Post("/logout", authHandler.Logout)
 
-	// Protected routes - use Keycloak JWT validation
-	protected := api.Group("", middleware.KeycloakJWTAuth())
+	// Protected routes - use Keycloak JWT validation with token blacklist check and audit logging
+	protected := api.Group("",
+		middleware.KeycloakJWTAuth(),
+		middleware.CheckTokenBlacklist(),
+		middleware.DataScope(),
+		middleware.AuditLogger(authzService),
+	)
 
-	// Members
+	// Members - with RBAC permission checking
 	members := protected.Group("/members")
-	members.Get("/", memberHandler.List)
-	members.Get("/:id", memberHandler.Get)
-	members.Post("/", middleware.RequireRole("national_admin", "province_admin", "district_admin"), memberHandler.Create)
-	members.Put("/:id", middleware.RequireRole("national_admin", "province_admin", "district_admin"), memberHandler.Update)
-	members.Delete("/:id", middleware.RequireRole("national_admin"), memberHandler.Delete)
-	members.Get("/:id/history", memberHandler.GetHistory)
-	members.Post("/:id/status", middleware.RequireRole("national_admin", "province_admin"), memberHandler.UpdateStatus)
+	members.Get("/", middleware.RequirePermission(models.ResourceMember, models.ActionList), memberHandler.List)
+	members.Get("/:id", middleware.RBACWithResourceCheck(models.ResourceMember, models.ActionRead), memberHandler.Get)
+	members.Post("/", middleware.RequirePermission(models.ResourceMember, models.ActionCreate), memberHandler.Create)
+	members.Put("/:id", middleware.RBACWithResourceCheck(models.ResourceMember, models.ActionUpdate), memberHandler.Update)
+	members.Delete("/:id", middleware.RBACWithResourceCheck(models.ResourceMember, models.ActionDelete), memberHandler.Delete)
+	members.Get("/:id/history", middleware.RBACWithResourceCheck(models.ResourceMember, models.ActionRead), memberHandler.GetHistory)
+	members.Post("/:id/status", middleware.RBACWithResourceCheck(models.ResourceMember, models.ActionApprove), memberHandler.UpdateStatus)
 
-	// Organizations
+	// Organizations - with RBAC permission checking
 	orgs := protected.Group("/organizations")
-	orgs.Get("/", orgHandler.List)
-	orgs.Get("/:id", orgHandler.Get)
-	orgs.Post("/", middleware.RequireRole("national_admin"), orgHandler.Create)
-	orgs.Put("/:id", middleware.RequireRole("national_admin", "province_admin"), orgHandler.Update)
-	orgs.Delete("/:id", middleware.RequireRole("national_admin"), orgHandler.Delete)
-	orgs.Get("/:id/members", orgHandler.GetMembers)
-	orgs.Get("/:id/stats", orgHandler.GetStats)
+	orgs.Get("/", middleware.RequirePermission(models.ResourceOrganization, models.ActionList), orgHandler.List)
+	orgs.Get("/:id", middleware.RBACWithResourceCheck(models.ResourceOrganization, models.ActionRead), orgHandler.Get)
+	orgs.Post("/", middleware.RequirePermission(models.ResourceOrganization, models.ActionCreate), orgHandler.Create)
+	orgs.Put("/:id", middleware.RBACWithResourceCheck(models.ResourceOrganization, models.ActionUpdate), orgHandler.Update)
+	orgs.Delete("/:id", middleware.RBACWithResourceCheck(models.ResourceOrganization, models.ActionDelete), orgHandler.Delete)
+	orgs.Get("/:id/members", middleware.RBACWithResourceCheck(models.ResourceOrganization, models.ActionRead), orgHandler.GetMembers)
+	orgs.Get("/:id/stats", middleware.RBACWithResourceCheck(models.ResourceOrganization, models.ActionRead), orgHandler.GetStats)
 
-	// Events
+	// Events - with RBAC permission checking
 	events := protected.Group("/events")
-	events.Get("/", eventHandler.List)
-	events.Get("/:id", eventHandler.Get)
-	events.Post("/", middleware.RequireRole("national_admin", "province_admin", "district_admin"), eventHandler.Create)
-	events.Put("/:id", middleware.RequireRole("national_admin", "province_admin", "district_admin"), eventHandler.Update)
-	events.Delete("/:id", middleware.RequireRole("national_admin", "province_admin"), eventHandler.Delete)
-	events.Post("/:id/register", eventHandler.Register)
-	events.Post("/:id/attendance", middleware.RequireRole("national_admin", "province_admin", "district_admin"), eventHandler.MarkAttendance)
-	events.Get("/:id/participants", eventHandler.GetParticipants)
+	events.Get("/", middleware.RequirePermission(models.ResourceEvent, models.ActionList), eventHandler.List)
+	events.Get("/:id", middleware.RBACWithResourceCheck(models.ResourceEvent, models.ActionRead), eventHandler.Get)
+	events.Post("/", middleware.RequirePermission(models.ResourceEvent, models.ActionCreate), eventHandler.Create)
+	events.Put("/:id", middleware.RBACWithResourceCheck(models.ResourceEvent, models.ActionUpdate), eventHandler.Update)
+	events.Delete("/:id", middleware.RBACWithResourceCheck(models.ResourceEvent, models.ActionDelete), eventHandler.Delete)
+	events.Post("/:id/register", eventHandler.Register) // All members can register
+	events.Post("/:id/attendance", middleware.RBACWithResourceCheck(models.ResourceEvent, models.ActionUpdate), eventHandler.MarkAttendance)
+	events.Get("/:id/participants", middleware.RBACWithResourceCheck(models.ResourceEvent, models.ActionRead), eventHandler.GetParticipants)
 
-	// Membership Fees
+	// Membership Fees - with RBAC permission checking
 	fees := protected.Group("/fees")
-	fees.Get("/", feeHandler.List)
-	fees.Get("/:id", feeHandler.Get)
-	fees.Post("/", middleware.RequireRole("national_admin", "province_admin", "district_admin"), feeHandler.Create)
-	fees.Put("/:id", middleware.RequireRole("national_admin", "province_admin", "district_admin"), feeHandler.Update)
-	fees.Get("/member/:memberId", feeHandler.GetByMember)
-	fees.Post("/bulk", middleware.RequireRole("national_admin"), feeHandler.BulkCreate)
+	fees.Get("/", middleware.RequirePermission(models.ResourceFee, models.ActionList), feeHandler.List)
+	fees.Get("/:id", middleware.RBACWithResourceCheck(models.ResourceFee, models.ActionRead), feeHandler.Get)
+	fees.Post("/", middleware.RequirePermission(models.ResourceFee, models.ActionCreate), feeHandler.Create)
+	fees.Put("/:id", middleware.RBACWithResourceCheck(models.ResourceFee, models.ActionUpdate), feeHandler.Update)
+	fees.Get("/member/:memberId", middleware.RequirePermission(models.ResourceFee, models.ActionRead), feeHandler.GetByMember)
+	fees.Post("/bulk", middleware.RequirePermission(models.ResourceFee, models.ActionImport), feeHandler.BulkCreate)
 
-	// Reports (admin only)
-	reports := protected.Group("/reports", middleware.RequireRole("national_admin", "province_admin"))
-	reports.Get("/members", memberHandler.Report)
-	reports.Get("/fees", feeHandler.Report)
-	reports.Get("/events", eventHandler.Report)
-	reports.Get("/dashboard", handlers.DashboardReport)
+	// Reports - with RBAC permission checking
+	reports := protected.Group("/reports")
+	reports.Get("/members", middleware.RequirePermission(models.ResourceReport, models.ActionRead), memberHandler.Report)
+	reports.Get("/fees", middleware.RequirePermission(models.ResourceReport, models.ActionRead), feeHandler.Report)
+	reports.Get("/events", middleware.RequirePermission(models.ResourceReport, models.ActionRead), eventHandler.Report)
+	reports.Get("/dashboard", middleware.RequirePermission(models.ResourceReport, models.ActionRead), handlers.DashboardReport)
+	reports.Get("/export/:type", middleware.RequirePermission(models.ResourceReport, models.ActionExport), handlers.ExportReport)
 
 	// Profile (self)
 	protected.Get("/profile", memberHandler.GetProfile)
 	protected.Put("/profile", memberHandler.UpdateProfile)
 	protected.Get("/profile/fees", feeHandler.GetMyFees)
 	protected.Get("/profile/events", eventHandler.GetMyEvents)
+
+	// Admin endpoints - Settings and Audit Logs (national_admin only)
+	admin := protected.Group("/admin", middleware.RequirePermission(models.ResourceSettings, models.ActionRead))
+	admin.Get("/audit-logs", handlers.GetAuditLogs(authzService))
+	admin.Get("/permissions", handlers.GetPermissionMatrix)
 
 	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
